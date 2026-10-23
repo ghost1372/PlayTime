@@ -10,8 +10,9 @@ endif
 PAYLOAD_VERSION ?= v1.0.0
 ELF := PlayTime-$(PAYLOAD_VERSION).elf
 
-SOURCES := main.c games.c server.c ui.c sqlite/sqlite3.c
-HEADERS := config.h games.h server.h ui.h sqlite/sqlite3.h
+SOURCES := main.c games.c server.c sqlite/sqlite3.c
+HEADERS := config.h games.h server.h sqlite/sqlite3.h
+ASSETS  := web/index.html
 
 CPPFLAGS := -DPAYLOAD_VERSION=\"$(PAYLOAD_VERSION)\" \
             -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION \
@@ -23,7 +24,7 @@ LDLIBS := -lkernel_sys -lSceUserService -lSceSystemService
 
 all: $(ELF)
 
-$(ELF): $(SOURCES) $(HEADERS)
+$(ELF): $(SOURCES) $(HEADERS) $(ASSETS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SOURCES) $(LDLIBS)
 
 clean:

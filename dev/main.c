@@ -4,7 +4,7 @@
  *   main.c    wiring: routes requests to the modules below
  *   games.c   goal: reads installed games from app.db
  *   server.c  minimal HTTP server (GET, plus POST for play time edits)
- *   ui.c      the web page, as a C string
+ *   web/index.html  the web page, embedded into the payload at build time
  *
  * Open the UI on the PS5 browser (launched automatically) or from any device
  * on the same network at http://<ps5-ip>:<PLAYTIME_PORT from config.h>
@@ -14,13 +14,37 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+#include <sys/syscall.h>
 
 #include <ps5/kernel.h>
 
 #include "config.h"
 #include "games.h"
 #include "server.h"
-#include "ui.h"
+
+/*
+ * Embed web/index.html into the payload at build time (no external tools
+ * needed). Defines: const uint8_t web_index_html[]; const size_t web_index_html_size;
+ * The path is relative to the directory `make` runs in.
+ */
+#define INCASSET(name, file)                    \
+    __asm__(".section .rodata\n"                \
+            ".global " #name "\n"               \
+            ".global " #name "_end\n"           \
+            ".global " #name "_size\n"          \
+            ".align 16\n"                       \
+            #name ":\n"                         \
+            ".incbin \"" file "\"\n"            \
+            #name "_end:\n"                     \
+            #name "_size:\n"                    \
+            ".quad " #name "_end - " #name "\n" \
+            ".previous\n");                     \
+    extern const uint8_t name[];                \
+    extern const size_t name##_size;
+
+INCASSET(web_index_html, "web/index.html");
 
 /* Titles that are NOT listed: edit PLAYTIME_EXCLUDED_TITLES in config.h. */
 static const char *const EXCLUDED_TITLES[] = {PLAYTIME_EXCLUDED_TITLES};
@@ -145,19 +169,23 @@ static void handle_request(int fd, const server_request_t *req, void *user) {
     }
 
     if(strcmp(path, "/") == 0 || strcmp(path, "/index.html") == 0) {
-        server_send(fd, 200, "text/html; charset=utf-8", ui_page(),
-                    ui_page_length(), 0);
+        server_send(fd, 200, "text/html; charset=utf-8", (const char *)web_index_html,
+                    web_index_html_size, 0);
     } else if(strcmp(path, "/api/info") == 0) {
         char ip[64];
         char firmware[16];
-        char body[256];
+        char body[768];
 
+        /* Branding strings come from config.h; avoid " and \ in them. */
         server_local_ip(ip, sizeof ip);
         format_firmware(firmware, sizeof firmware, ctx->firmware_version);
         snprintf(body, sizeof body,
                  "{\"ip\":\"%s\",\"port\":%d,\"firmware\":\"%s\","
-                 "\"version\":\"%s\"}", ip, ctx->port, firmware,
-                 PAYLOAD_VERSION);
+                 "\"version\":\"%s\",\"name\":\"%s\",\"tagline\":\"%s\","
+                 "\"author\":\"%s\",\"repo\":\"%s\",\"csrf\":\"%s\"}",
+                 ip, ctx->port, firmware, PAYLOAD_VERSION, PLAYTIME_APP_NAME,
+                 PLAYTIME_TAGLINE, PLAYTIME_AUTHOR, PLAYTIME_REPO_URL,
+                 PLAYTIME_CSRF_HEADER);
         server_send(fd, 200, "application/json; charset=utf-8", body,
                     strlen(body), 0);
     } else if(strcmp(path, "/api/games") == 0) {
@@ -220,6 +248,9 @@ static void launch_ps5_browser(int port) {
 int main(void) {
     context_t ctx;
     int listen_fd;
+
+    /* Name shown in the running-process list (see config.h). */
+    syscall(SYS_thr_set_name, -1, PAYLOAD_PROCESS_NAME);
 
     ctx.database_path = APP_DB_PATH;
     ctx.port = PLAYTIME_PORT;
